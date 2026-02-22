@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>rithcon AI Agent</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="logo">
+                <img src="icon.png" alt="rithcon Logo" style="height: 24px; vertical-align: middle; margin-right: 8px;">
+                rithcon
+            </div>
+            <div class="controls">
+                <button id="settings-btn" class="icon-btn" title="Settings">
+                    <img src="icons/settings.svg" alt="Settings" width="20" height="20">
+                </button>
+            </div>
+        </header>
+
+        <div class="mode-toggle-container">
+            <span class="mode-label">Chat Mode</span>
+            <label class="switch">
+                <input type="checkbox" id="agent-mode-toggle">
+                <span class="slider round"></span>
+            </label>
+            <span class="mode-label agent-mode-label">Agent Mode</span>
+        </div>
+
+        <!-- Main Chat/Log Area -->
+        <main class="chat-area" id="chat-container">
+            <div class="message system-msg">
+                <div class="msg-content">Welcome to rithcon! I can chat with you or help control your browser in Agent
+                    Mode.</div>
+            </div>
+        </main>
+
+        <!-- Settings Overlay -->
+        <div id="settings-overlay" class="overlay hidden">
+            <div class="overlay-header">
+                <h2>Configuration</h2>
+                <button id="close-settings-btn" class="icon-btn">
+                    <img src="icons/x.svg" alt="Close" width="20" height="20">
+                </button>
+            </div>
+            <div class="settings-content">
+                <div class="provider-templates-section">
+                    <div class="provider-templates-header">
+                        <h3>Quick provider templates</h3>
+                        <span class="templates-count">9 templates available</span>
+                        <button id="toggle-templates-btn" class="icon-btn">
+                            <img src="icons/chevron-down.svg" alt="Toggle Templates" width="20" height="20">
+                        </button>
+                    </div>
+                    <div id="provider-grid" class="provider-grid">
+                        <div class="provider-card" data-provider="openai">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/bot.svg" alt="OpenAI" width="18" height="18">
+                                </span>
+                                <span class="provider-name">OpenAI</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                        <div class="provider-card" data-provider="openai-compatible">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/refresh-cw.svg" alt="OpenAI Compatible" width="18" height="18">
+                                </span>
+                                <span class="provider-name">OpenAI Compatible</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                        <div class="provider-card" data-provider="anthropic">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/brain.svg" alt="Anthropic" width="18" height="18">
+                                </span>
+                                <span class="provider-name">Anthropic</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                        <div class="provider-card" data-provider="gemini">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/sparkles.svg" alt="Gemini" width="18" height="18">
+                                </span>
+                                <span class="provider-name">Gemini</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                        <div class="provider-card" data-provider="ollama">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/bot.svg" alt="Ollama" width="18" height="18">
+                                </span>
+                                <span class="provider-name">Ollama</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                        <div class="provider-card" data-provider="openrouter">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/milestone.svg" alt="OpenRouter" width="18" height="18">
+                                </span>
+                                <span class="provider-name">OpenRouter</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                        <div class="provider-card" data-provider="lm-studio">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/monitor.svg" alt="LM Studio" width="18" height="18">
+                                </span>
+                                <span class="provider-name">LM Studio</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                        <div class="provider-card" data-provider="azure">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/cloud.svg" alt="Azure" width="18" height="18">
+                                </span>
+                                <span class="provider-name">Azure</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                        <div class="provider-card" data-provider="aws-bedrock">
+                            <div class="provider-info">
+                                <span class="provider-icon">
+                                    <img src="icons/mountain-snow.svg" alt="AWS Bedrock" width="18" height="18">
+                                </span>
+                                <span class="provider-name">AWS Bedrock</span>
+                            </div>
+                            <button class="use-btn">USE</button>
+                        </div>
+                    </div>
+                    <div class="custom-provider-section">
+                        <button id="custom-provider-btn" class="custom-btn">USE Custom Provider</button>
+                    </div>
+                </div>
+
+                <div class="selected-config-section">
+                    <h4 id="selected-provider-label">Configuration (Gemini)</h4>
+                    <div class="form-group" id="base-url-group" style="display: none;">
+                        <label for="base-url-input">Base URL</label>
+                        <input type="text" id="base-url-input" placeholder="e.g. http://localhost:11434/v1">
+                    </div>
+                    <div class="form-group">
+                        <label for="model-input">Model Name</label>
+                        <input type="text" id="model-input" placeholder="e.g. gemini-1.5-flash">
+                    </div>
+                    <div class="form-group">
+                        <label for="api-key-input">API Key</label>
+                        <input type="password" id="api-key-input" placeholder="Enter API Key securely">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Services</label>
+                    <div class="service-toggle">
+                        <input type="checkbox" id="service-youtube" checked>
+                        <label for="service-youtube">YouTube Control</label>
+                    </div>
+                    <div class="service-toggle">
+                        <input type="checkbox" id="service-google" checked>
+                        <label for="service-google">Google Search Control</label>
+                    </div>
+                </div>
+                <button id="save-settings-btn" class="primary-btn">Save Configurations</button>
+                <div id="save-status" class="status-msg hidden">Saved successfully!</div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <footer class="input-area">
+            <div id="agent-status-bar" class="agent-status-bar hidden">
+                <span class="status-dot pulsing"></span>
+                <span id="agent-status-text">Agent is ready...</span>
+            </div>
+            <div class="input-wrapper">
+                <textarea id="user-input" placeholder="Ask a question or give a command..." rows="1"></textarea>
+                <button id="send-btn" class="send-btn">
+                    <img src="icons/send.svg" alt="Send" width="20" height="20">
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <script src="api.js"></script>
+    <script src="agent.js"></script>
+    <script src="sidepanel.js"></script>
+</body>
+
+</html>
