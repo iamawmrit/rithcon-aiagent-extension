@@ -1,11 +1,12 @@
 {
     "manifest_version": 3,
     "name": "rithcon - Browser AI Agent",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Browser-level AI agent capable of chat and autonomous browser control.",
     "permissions": [
         "sidePanel",
         "storage",
+        "tabs",
         "activeTab",
         "scripting"
     ],

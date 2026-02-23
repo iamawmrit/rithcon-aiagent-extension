@@ -27,35 +27,41 @@ const providerGrid = document.getElementById('provider-grid');
 
 // State
 let isAgentMode = false;
+let isProcessing = false;
+let stopRequested = false;
 let apiKey = '';
 let model = '';
 let provider = 'gemini';
 let baseUrl = '';
+let currentAbortController = null;
+let currentRunId = null;
+let activePlaceholderMsg = null;
+let pendingApprovalResolver = null;
 
 const providerNames = {
-    'openai': 'OpenAI',
+    openai: 'OpenAI',
     'openai-compatible': 'OpenAI Compatible',
-    'anthropic': 'Anthropic',
-    'gemini': 'Gemini',
-    'ollama': 'Ollama',
-    'openrouter': 'OpenRouter',
+    anthropic: 'Anthropic',
+    gemini: 'Gemini',
+    ollama: 'Ollama',
+    openrouter: 'OpenRouter',
     'lm-studio': 'LM Studio',
-    'azure': 'Azure',
+    azure: 'Azure',
     'aws-bedrock': 'AWS Bedrock',
-    'custom': 'Custom Provider'
+    custom: 'Custom Provider'
 };
 
 const defaultModels = {
-    'openai': 'gpt-4o-mini',
+    openai: 'gpt-4o-mini',
     'openai-compatible': '',
-    'anthropic': 'claude-3-haiku-20240307',
-    'gemini': 'gemini-1.5-flash',
-    'ollama': 'llama3',
-    'openrouter': '',
+    anthropic: 'claude-3-haiku-20240307',
+    gemini: 'gemini-1.5-flash',
+    ollama: 'llama3',
+    openrouter: '',
     'lm-studio': '',
-    'azure': '',
+    azure: '',
     'aws-bedrock': '',
-    'custom': ''
+    custom: ''
 };
 
 const requiresBaseUrl = ['openai-compatible', 'ollama', 'lm-studio', 'custom'];
@@ -63,24 +69,21 @@ const requiresBaseUrl = ['openai-compatible', 'ollama', 'lm-studio', 'custom'];
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
+    updateModeUI();
+    updateProcessingUI(false);
 
-    // Auto-resize textarea
-    userInput.addEventListener('input', function () {
-        this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px';
-    });
-
-    // Event Listeners
-    sendBtn.addEventListener('click', handleSendMessage);
-    userInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleSendMessage();
+    userInput.addEventListener('input', resizeInputBox);
+    userInput.addEventListener('keydown', async (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            await handleSendButtonClick();
         }
     });
 
-    agentModeToggle.addEventListener('change', (e) => {
-        isAgentMode = e.target.checked;
+    sendBtn.addEventListener('click', handleSendButtonClick);
+
+    agentModeToggle.addEventListener('change', (event) => {
+        isAgentMode = event.target.checked;
         updateModeUI();
     });
 
@@ -88,7 +91,6 @@ document.addEventListener('DOMContentLoaded', () => {
     closeSettingsBtn.addEventListener('click', () => settingsOverlay.classList.add('hidden'));
     saveSettingsBtn.addEventListener('click', saveSettings);
 
-    // Provider Grids
     providerCards.forEach(card => {
         card.addEventListener('click', () => selectProvider(card.dataset.provider));
     });
@@ -98,19 +100,31 @@ document.addEventListener('DOMContentLoaded', () => {
         providerGrid.classList.toggle('hidden');
         toggleTemplatesBtn.classList.toggle('collapsed');
     });
+
+    modelInput.addEventListener('input', () => {
+        modelInput.dataset.isDefault = 'false';
+    });
 });
+
+async function handleSendButtonClick() {
+    if (isProcessing) {
+        stopCurrentProcess();
+        return;
+    }
+    await handleSendMessage();
+}
 
 function selectProvider(selectedProvider) {
     provider = selectedProvider;
 
-    // Update UI
     providerCards.forEach(card => {
+        const useBtn = card.querySelector('.use-btn');
         if (card.dataset.provider === selectedProvider) {
             card.classList.add('selected');
-            card.querySelector('.use-btn').textContent = 'SELECTED';
+            if (useBtn) useBtn.textContent = 'SELECTED';
         } else {
             card.classList.remove('selected');
-            card.querySelector('.use-btn').textContent = 'USE';
+            if (useBtn) useBtn.textContent = 'USE';
         }
     });
 
@@ -122,15 +136,13 @@ function selectProvider(selectedProvider) {
         customProviderBtn.textContent = 'USE Custom Provider';
     }
 
-    selectedProviderLabel.textContent = `Configuration (${providerNames[selectedProvider]})`;
+    selectedProviderLabel.textContent = `Configuration (${providerNames[selectedProvider] || selectedProvider})`;
 
-    // Set default model if empty and changing provider
     if (!modelInput.value || modelInput.dataset.isDefault === 'true') {
         modelInput.value = defaultModels[selectedProvider] || '';
         modelInput.dataset.isDefault = 'true';
     }
 
-    // Toggle base URL
     if (requiresBaseUrl.includes(selectedProvider)) {
         baseUrlGroup.style.display = 'block';
     } else {
@@ -139,49 +151,49 @@ function selectProvider(selectedProvider) {
     }
 }
 
-// Clear default flag if user types
-modelInput.addEventListener('input', () => {
-    modelInput.dataset.isDefault = 'false';
-});
-
 function loadSettings() {
     chrome.storage.local.get(['apiKey', 'model', 'provider', 'baseUrl', 'agentModeEnabled', 'services'], (result) => {
-        if (result.apiKey) apiKeyInput.value = result.apiKey;
-        if (result.model) {
+        if (typeof result.apiKey === 'string') {
+            apiKey = result.apiKey;
+            apiKeyInput.value = result.apiKey;
+        }
+
+        if (typeof result.model === 'string' && result.model) {
+            model = result.model;
             modelInput.value = result.model;
             modelInput.dataset.isDefault = 'false';
-            model = result.model;
-        }
-        if (result.baseUrl) {
-            baseUrlInput.value = result.baseUrl;
-            baseUrl = result.baseUrl;
         }
 
-        const savedProvider = result.provider || 'gemini';
-        selectProvider(savedProvider);
+        if (typeof result.baseUrl === 'string') {
+            baseUrl = result.baseUrl;
+            baseUrlInput.value = result.baseUrl;
+        }
+
+        selectProvider(result.provider || 'gemini');
 
         if (result.agentModeEnabled !== undefined) {
-            agentModeToggle.checked = result.agentModeEnabled;
-            isAgentMode = result.agentModeEnabled;
-            updateModeUI();
+            isAgentMode = Boolean(result.agentModeEnabled);
+            agentModeToggle.checked = isAgentMode;
         }
 
         if (result.services) {
-            serviceYoutube.checked = result.services.youtube;
-            serviceGoogle.checked = result.services.google;
+            serviceYoutube.checked = Boolean(result.services.youtube);
+            serviceGoogle.checked = Boolean(result.services.google);
         }
+
+        updateModeUI();
     });
 }
 
 function saveSettings() {
-    const newApiKey = apiKeyInput.value;
-    const newModel = modelInput.value;
-    const newBaseUrl = baseUrlInput.value;
+    const newApiKey = apiKeyInput.value.trim();
+    const newModel = modelInput.value.trim();
+    const newBaseUrl = baseUrlInput.value.trim();
 
     chrome.storage.local.set({
         apiKey: newApiKey,
         model: newModel,
-        provider: provider,
+        provider,
         baseUrl: newBaseUrl,
         agentModeEnabled: isAgentMode,
         services: {
@@ -194,7 +206,7 @@ function saveSettings() {
         baseUrl = newBaseUrl;
 
         saveStatus.classList.remove('hidden');
-        setTimeout(() => saveStatus.classList.add('hidden'), 3000);
+        setTimeout(() => saveStatus.classList.add('hidden'), 2500);
     });
 }
 
@@ -204,58 +216,166 @@ function updateModeUI() {
         chatLabel.classList.remove('active');
         agentLabel.classList.add('active');
         document.body.classList.add('agent-mode-active');
+        document.body.classList.remove('chat-mode-active');
     } else {
         chatLabel.classList.add('active');
         agentLabel.classList.remove('active');
         document.body.classList.remove('agent-mode-active');
+        document.body.classList.add('chat-mode-active');
         agentStatusBar.classList.add('hidden');
+    }
+}
+
+function updateProcessingUI(processing) {
+    isProcessing = processing;
+    sendBtn.classList.toggle('is-stop', processing);
+    sendBtn.title = processing ? 'Stop current process' : 'Send';
+
+    settingsBtn.disabled = processing;
+    agentModeToggle.disabled = processing;
+
+    if (!processing) {
+        activePlaceholderMsg = null;
+        currentAbortController = null;
+        currentRunId = null;
+        stopRequested = false;
+        pendingApprovalResolver = null;
+    }
+}
+
+function stopCurrentProcess() {
+    if (!isProcessing) {
+        return;
+    }
+
+    stopRequested = true;
+    window.appendActionLog('Stop requested by user');
+
+    if (pendingApprovalResolver) {
+        pendingApprovalResolver({ approved: false, reason: 'canceled' });
+        pendingApprovalResolver = null;
+    }
+
+    if (currentAbortController) {
+        currentAbortController.abort();
+    }
+
+    if (currentRunId) {
+        chrome.runtime.sendMessage({ type: 'CANCEL_AGENT_RUN', runId: currentRunId }, () => {
+            // Ignore cancellation callback errors when service worker restarts.
+        });
+    }
+
+    if (activePlaceholderMsg) {
+        activePlaceholderMsg.querySelector('.msg-content').textContent = 'Process stopped.';
     }
 }
 
 async function handleSendMessage() {
     const text = userInput.value.trim();
-    if (!text) return;
-
-    appendMessage(text, 'user-msg');
-    userInput.value = '';
-    userInput.style.height = 'auto';
-
-    if (!apiKey) {
-        appendMessage("Please configure your API key in settings first.", 'system-msg');
+    if (!text) {
         return;
     }
 
-    if (isAgentMode) {
-        agentStatusBar.classList.remove('hidden');
-        agentStatusText.textContent = "Analyzing intent...";
+    const localChatResponse = !isAgentMode ? getLocalChatModeResponse(text) : '';
 
-        try {
-            // Delegate to agent.js to handle logic
-            if (typeof window.processAgentCommand === 'function') {
-                await window.processAgentCommand(text, apiKey, provider, model, baseUrl);
-            } else {
-                appendMessage("Agent logic not loaded.", 'system-msg');
-            }
-        } catch (error) {
-            appendActionLog(`Error: ${error.message}`);
-            agentStatusBar.classList.add('hidden');
-        }
-
-    } else {
-        // Chat Mode
-        const placeholderMsg = appendMessage("...", 'bot-msg');
-        try {
-            // Delegate to api.js to handle chat completion
-            if (typeof window.generateChatResponse === 'function') {
-                const responseText = await window.generateChatResponse(text, apiKey, provider, model, baseUrl);
-                placeholderMsg.querySelector('.msg-content').textContent = responseText;
-            } else {
-                placeholderMsg.querySelector('.msg-content').textContent = "API logic not loaded.";
-            }
-        } catch (error) {
-            placeholderMsg.querySelector('.msg-content').textContent = `Error: ${error.message}`;
-        }
+    if (!localChatResponse && requiresApiKey(provider) && !apiKey) {
+        appendMessage('Please configure your API key in settings first.', 'system-msg');
+        return;
     }
+
+    appendMessage(text, 'user-msg');
+    userInput.value = '';
+    resizeInputBox();
+
+    if (localChatResponse) {
+        appendMessage(localChatResponse, 'bot-msg');
+        return;
+    }
+
+    currentAbortController = new AbortController();
+    currentRunId = isAgentMode ? `run-${Date.now()}` : null;
+    stopRequested = false;
+    updateProcessingUI(true);
+
+    try {
+        if (isAgentMode) {
+            agentStatusBar.classList.remove('hidden');
+            agentStatusText.textContent = 'Thinking through the best action plan...';
+
+            if (typeof window.processAgentCommand !== 'function') {
+                throw new Error('Agent logic is not loaded.');
+            }
+
+            await window.processAgentCommand(text, apiKey, provider, model, baseUrl, {
+                runId: currentRunId,
+                signal: currentAbortController.signal,
+                shouldStop: () => stopRequested || currentAbortController.signal.aborted
+            });
+        } else {
+            if (typeof window.generateChatResponse !== 'function') {
+                throw new Error('API logic is not loaded.');
+            }
+
+            activePlaceholderMsg = appendMessage('...', 'bot-msg');
+            const responseText = await window.generateChatResponse(
+                text,
+                apiKey,
+                provider,
+                model,
+                baseUrl,
+                { signal: currentAbortController.signal }
+            );
+            activePlaceholderMsg.querySelector('.msg-content').textContent = responseText;
+        }
+    } catch (error) {
+        const aborted = isAbortError(error) || stopRequested;
+        if (aborted) {
+            if (isAgentMode) {
+                appendMessage('Process stopped.', 'system-msg');
+                agentStatusBar.classList.add('hidden');
+            } else if (activePlaceholderMsg) {
+                activePlaceholderMsg.querySelector('.msg-content').textContent = 'Process stopped.';
+            }
+        } else if (isAgentMode) {
+            window.appendActionLog(`Error: ${error.message}`);
+            appendMessage(`Error: ${error.message}`, 'system-msg');
+            agentStatusBar.classList.add('hidden');
+        } else if (activePlaceholderMsg) {
+            activePlaceholderMsg.querySelector('.msg-content').textContent = `Error: ${error.message}`;
+        }
+    } finally {
+        updateProcessingUI(false);
+    }
+}
+
+function requiresApiKey(selectedProvider) {
+    return ['openai', 'anthropic', 'gemini', 'openrouter', 'azure', 'aws-bedrock'].includes(selectedProvider);
+}
+
+function getLocalChatModeResponse(text) {
+    const normalized = String(text || '').toLowerCase().trim();
+    if (!normalized) {
+        return '';
+    }
+
+    const identityPattern = /\b(who are you|what are you|your name|about you|are you ai|which ai|introduce yourself|what can you do|what do you do)\b/i;
+    const wellbeingPattern = /\b(how are you|how are u|how's it going|how do you do)\b/i;
+
+    if (identityPattern.test(normalized) || wellbeingPattern.test(normalized)) {
+        return "I'm rithcon Browser AI Agent extension. I help users operate, analyze, and automate websites in chat and agent mode. Made by awmrit.com.";
+    }
+
+    return '';
+}
+
+function resizeInputBox() {
+    userInput.style.height = 'auto';
+    userInput.style.height = `${userInput.scrollHeight}px`;
+}
+
+function isAbortError(error) {
+    return Boolean(error && (error.name === 'AbortError' || /abort|canceled|cancelled/i.test(error.message)));
 }
 
 // Utility to append messages to chat
@@ -273,11 +393,94 @@ function appendMessage(text, className) {
     return msgDiv;
 }
 
+function appendApprovalCard(stepSummary, riskInfo) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'message approval-msg';
+
+    const header = document.createElement('div');
+    header.className = 'approval-title';
+    header.textContent = `Confirmation required (${riskInfo.level.toUpperCase()} risk)`;
+
+    const details = document.createElement('div');
+    details.className = 'approval-details';
+    details.textContent = stepSummary;
+
+    const reasons = document.createElement('div');
+    reasons.className = 'approval-reasons';
+    reasons.textContent = `Reason: ${(riskInfo.reasons || []).join('; ') || 'Sensitive action detected.'}`;
+
+    const actions = document.createElement('div');
+    actions.className = 'approval-actions';
+
+    const denyBtn = document.createElement('button');
+    denyBtn.className = 'approval-btn deny';
+    denyBtn.textContent = 'Deny';
+
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'approval-btn approve';
+    approveBtn.textContent = 'Approve';
+
+    actions.appendChild(denyBtn);
+    actions.appendChild(approveBtn);
+
+    wrapper.appendChild(header);
+    wrapper.appendChild(details);
+    wrapper.appendChild(reasons);
+    wrapper.appendChild(actions);
+
+    chatContainer.appendChild(wrapper);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    return { wrapper, approveBtn, denyBtn };
+}
+
+// Global utility for agent.js to request sensitive-action approval
+window.requestActionApproval = function (step, riskInfo = {}) {
+    if (!isProcessing || stopRequested) {
+        return Promise.resolve({ approved: false, reason: 'not-running' });
+    }
+
+    const stepSummary = typeof window.formatAgentStepSummary === 'function'
+        ? window.formatAgentStepSummary(step)
+        : `${step.action || 'ACTION'} pending approval`;
+
+    return new Promise((resolve) => {
+        const { wrapper, approveBtn, denyBtn } = appendApprovalCard(stepSummary, riskInfo);
+        const timeoutMs = Number(riskInfo.timeoutMs) > 0 ? Number(riskInfo.timeoutMs) : 20000;
+        let settled = false;
+
+        const finish = (result) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeout);
+            approveBtn.disabled = true;
+            denyBtn.disabled = true;
+            pendingApprovalResolver = null;
+
+            const resultText = result.approved ? 'approved' : `denied (${result.reason || 'manual'})`;
+            window.appendActionLog(`Approval ${resultText}: ${stepSummary}`);
+            resolve(result);
+        };
+
+        pendingApprovalResolver = finish;
+
+        approveBtn.addEventListener('click', () => finish({ approved: true, reason: 'approved' }));
+        denyBtn.addEventListener('click', () => finish({ approved: false, reason: 'denied' }));
+
+        const timeout = setTimeout(() => {
+            finish({ approved: false, reason: 'timeout' });
+        }, timeoutMs);
+    });
+};
+
 // Global utility for agent.js to post action logs
 window.appendActionLog = function (text) {
+    const timestamp = new Date().toLocaleTimeString([], { hour12: false });
     const msgDiv = document.createElement('div');
-    msgDiv.className = `message action-log-msg`;
-    msgDiv.textContent = `> ${text}`;
+    msgDiv.className = 'message action-log-msg';
+    msgDiv.textContent = `[${timestamp}] ${text}`;
     chatContainer.appendChild(msgDiv);
     chatContainer.scrollTop = chatContainer.scrollHeight;
 };
@@ -286,8 +489,10 @@ window.appendActionLog = function (text) {
 window.updateAgentStatus = function (text, isDone = false) {
     if (isDone) {
         agentStatusBar.classList.add('hidden');
-    } else {
-        agentStatusBar.classList.remove('hidden');
-        agentStatusText.textContent = text;
+        return;
     }
+    agentStatusBar.classList.remove('hidden');
+    agentStatusText.textContent = text;
 };
+
+window.appendMessage = appendMessage;

@@ -15,6 +15,7 @@
             <div class="logo">
                 <img src="icon.png" alt="rithcon Logo" style="height: 24px; vertical-align: middle; margin-right: 8px;">
                 rithcon
+                <span class="logo-subtitle">Browser Agent</span>
             </div>
             <div class="controls">
                 <button id="settings-btn" class="icon-btn" title="Settings">
@@ -35,8 +36,7 @@
         <!-- Main Chat/Log Area -->
         <main class="chat-area" id="chat-container">
             <div class="message system-msg">
-                <div class="msg-content">Welcome to rithcon! I can chat with you or help control your browser in Agent
-                    Mode.</div>
+                <div class="msg-content">Welcome to rithcon. Agent Mode can analyze pages, fill forms, run in parallel across tabs, and execute website actions.</div>
             </div>
         </main>
 
@@ -185,8 +185,9 @@
             </div>
             <div class="input-wrapper">
                 <textarea id="user-input" placeholder="Ask a question or give a command..." rows="1"></textarea>
-                <button id="send-btn" class="send-btn">
-                    <img src="icons/send.svg" alt="Send" width="20" height="20">
+                <button id="send-btn" class="send-btn" title="Send">
+                    <img class="send-icon" src="icons/send.svg" alt="Send" width="20" height="20">
+                    <img class="stop-icon" src="icons/x.svg" alt="Stop" width="20" height="20">
                 </button>
             </div>
         </footer>
