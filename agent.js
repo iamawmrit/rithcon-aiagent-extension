@@ -78,35 +78,44 @@ window.processAgentCommand = async function (prompt, apiKey, provider, model, ba
         } else {
             const systemPrompt = buildSystemPrompt(defaultTarget);
             const fullPrompt = buildPlanningPrompt(systemPrompt, prompt, tabSnapshot, pageContext);
+            try {
+                const rawPlanResponse = await window.generateChatResponse(
+                    fullPrompt,
+                    apiKey,
+                    provider,
+                    model,
+                    baseUrl,
+                    { signal }
+                );
+                assertNotStopped(shouldStop);
 
-            const rawPlanResponse = await window.generateChatResponse(
-                fullPrompt,
-                apiKey,
-                provider,
-                model,
-                baseUrl,
-                { signal }
-            );
-            assertNotStopped(shouldStop);
+                const plannerOutput = parsePlannerResponse(rawPlanResponse);
+                const todos = sanitizeTodos(plannerOutput.todos);
 
-            const plannerOutput = parsePlannerResponse(rawPlanResponse);
-            const todos = sanitizeTodos(plannerOutput.todos);
+                if (plannerOutput.analysis) {
+                    window.appendMessage(`Analysis: ${plannerOutput.analysis}`, 'system-msg');
+                }
 
-            if (plannerOutput.analysis) {
-                window.appendMessage(`Analysis: ${plannerOutput.analysis}`, 'system-msg');
-            }
+                if (todos.length) {
+                    renderTodosPreview(todos);
+                }
 
-            if (todos.length) {
-                renderTodosPreview(todos);
-            }
+                plan = sanitizePlan(plannerOutput.plan, defaultTarget);
 
-            plan = sanitizePlan(plannerOutput.plan, defaultTarget);
-
-            if (!plan.length) {
-                const todoActions = todos
-                    .map(todo => todo.action)
-                    .filter(action => action && typeof action === 'object');
-                plan = sanitizePlan(todoActions, defaultTarget);
+                if (!plan.length) {
+                    const todoActions = todos
+                        .map(todo => todo.action)
+                        .filter(action => action && typeof action === 'object');
+                    plan = sanitizePlan(todoActions, defaultTarget);
+                }
+            } catch (plannerError) {
+                const fallbackPlan = maybeBuildRuleBasedFallbackPlan(prompt, defaultTarget);
+                if (fallbackPlan) {
+                    window.appendActionLog(`[${runId}] Planner provider failed. Using local fallback plan: ${redactSensitiveText(plannerError.message)}`);
+                    plan = sanitizePlan(fallbackPlan, defaultTarget);
+                } else {
+                    throw plannerError;
+                }
             }
         }
 
@@ -1128,6 +1137,70 @@ function maybeBuildDeterministicPlan(prompt, defaultTarget) {
         url: resolvedUrl,
         target: defaultTarget
     }];
+}
+
+function maybeBuildRuleBasedFallbackPlan(prompt, defaultTarget) {
+    if (typeof prompt !== 'string') {
+        return null;
+    }
+
+    const normalized = prompt.toLowerCase();
+
+    const hasYouTubeMusicIntent = /\b(play|music|song|track)\b/i.test(normalized)
+        && /\b(youtube|yt)\b/i.test(normalized);
+    if (hasYouTubeMusicIntent) {
+        const extractedQuery = extractPlayableQuery(prompt);
+        return [
+            {
+                action: 'SEARCH_YOUTUBE',
+                query: extractedQuery || 'music',
+                target: defaultTarget
+            },
+            {
+                action: 'PLAY_MEDIA',
+                target: defaultTarget
+            }
+        ];
+    }
+
+    const hasGoogleSearchIntent = /\b(search|google)\b/i.test(normalized);
+    if (hasGoogleSearchIntent && !/\b(youtube|yt)\b/i.test(normalized)) {
+        const query = extractSearchQuery(prompt);
+        if (query) {
+            return [{
+                action: 'GOOGLE_SEARCH',
+                query,
+                target: defaultTarget
+            }];
+        }
+    }
+
+    return null;
+}
+
+function extractPlayableQuery(prompt) {
+    let query = String(prompt || '')
+        .replace(/\b(play|music|song|track|from|on|youtube|yt|please|can you|could you)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!query || query.length < 2) {
+        return 'music';
+    }
+
+    if (query.length > 140) {
+        query = query.slice(0, 140).trim();
+    }
+
+    return query;
+}
+
+function extractSearchQuery(prompt) {
+    const stripped = String(prompt || '')
+        .replace(/\b(search|google|for|please|can you|could you)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return stripped.slice(0, 180);
 }
 
 function resolveNavigationUrl(prompt) {

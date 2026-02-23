@@ -37,6 +37,9 @@ let currentAbortController = null;
 let currentRunId = null;
 let activePlaceholderMsg = null;
 let pendingApprovalResolver = null;
+const BRAND_IDENTITY_RESPONSE = "I'm rithcon Browser AI Agent extension. I help users operate, analyze, and automate websites in chat and agent mode. Made by awmrit.com.";
+const chatHistory = [];
+const MAX_CHAT_HISTORY_MESSAGES = 18;
 
 const providerNames = {
     openai: 'OpenAI',
@@ -277,7 +280,9 @@ async function handleSendMessage() {
         return;
     }
 
-    const localChatResponse = !isAgentMode ? getLocalChatModeResponse(text) : '';
+    const localChatResponse = !isAgentMode
+        ? await getBrandedIdentityResponse(text)
+        : '';
 
     if (!localChatResponse && requiresApiKey(provider) && !apiKey) {
         appendMessage('Please configure your API key in settings first.', 'system-msg');
@@ -285,11 +290,15 @@ async function handleSendMessage() {
     }
 
     appendMessage(text, 'user-msg');
+    if (!isAgentMode) {
+        pushChatMessage('user', text);
+    }
     userInput.value = '';
     resizeInputBox();
 
     if (localChatResponse) {
         appendMessage(localChatResponse, 'bot-msg');
+        pushChatMessage('assistant', localChatResponse);
         return;
     }
 
@@ -319,7 +328,7 @@ async function handleSendMessage() {
 
             activePlaceholderMsg = appendMessage('...', 'bot-msg');
             const responseText = await window.generateChatResponse(
-                text,
+                buildChatHistoryForModel(),
                 apiKey,
                 provider,
                 model,
@@ -327,6 +336,7 @@ async function handleSendMessage() {
                 { signal: currentAbortController.signal }
             );
             activePlaceholderMsg.querySelector('.msg-content').textContent = responseText;
+            pushChatMessage('assistant', responseText);
         }
     } catch (error) {
         const aborted = isAbortError(error) || stopRequested;
@@ -353,20 +363,128 @@ function requiresApiKey(selectedProvider) {
     return ['openai', 'anthropic', 'gemini', 'openrouter', 'azure', 'aws-bedrock'].includes(selectedProvider);
 }
 
-function getLocalChatModeResponse(text) {
-    const normalized = String(text || '').toLowerCase().trim();
-    if (!normalized) {
+function pushChatMessage(role, content) {
+    const normalizedRole = role === 'assistant' ? 'assistant' : 'user';
+    const normalizedContent = String(content || '').trim();
+    if (!normalizedContent) {
+        return;
+    }
+
+    chatHistory.push({ role: normalizedRole, content: normalizedContent });
+    if (chatHistory.length > MAX_CHAT_HISTORY_MESSAGES) {
+        chatHistory.splice(0, chatHistory.length - MAX_CHAT_HISTORY_MESSAGES);
+    }
+}
+
+function buildChatHistoryForModel() {
+    return chatHistory.slice(-MAX_CHAT_HISTORY_MESSAGES);
+}
+
+async function getBrandedIdentityResponse(text) {
+    const local = getLocalChatModeResponse(text);
+    if (local) {
+        return local;
+    }
+
+    if (!apiKey || typeof window.generateChatResponse !== 'function') {
         return '';
     }
 
-    const identityPattern = /\b(who are you|what are you|your name|about you|are you ai|which ai|introduce yourself|what can you do|what do you do)\b/i;
-    const wellbeingPattern = /\b(how are you|how are u|how's it going|how do you do)\b/i;
+    const normalized = normalizeIntentText(text);
+    if (!looksPotentiallyIdentityRelated(normalized)) {
+        return '';
+    }
 
-    if (identityPattern.test(normalized) || wellbeingPattern.test(normalized)) {
-        return "I'm rithcon Browser AI Agent extension. I help users operate, analyze, and automate websites in chat and agent mode. Made by awmrit.com.";
+    try {
+        const classifierPrompt = [
+            'Classify the user message.',
+            'Return ONLY JSON like {"related": true} or {"related": false}.',
+            'Set related=true only if the user is asking about assistant identity, name, creator, model, purpose, capabilities, or if they are asking "how are you".',
+            `User message: ${text}`
+        ].join('\n');
+
+        const raw = await window.generateChatResponse(
+            classifierPrompt,
+            apiKey,
+            provider,
+            model,
+            baseUrl
+        );
+
+        if (isRelatedByClassifier(raw)) {
+            return BRAND_IDENTITY_RESPONSE;
+        }
+    } catch (_error) {
+        // If classifier fails, fall through to normal chat.
     }
 
     return '';
+}
+
+function getLocalChatModeResponse(text) {
+    const raw = String(text || '').toLowerCase().trim();
+    if (!raw) {
+        return '';
+    }
+
+    const normalized = normalizeIntentText(raw);
+
+    const isIdentityQuery = /\b(who are you|what are you|your name|about you|are you ai|which ai|introduce yourself|what can you do|what do you do)\b/i.test(normalized)
+        || (/\bwho\b/.test(normalized) && /\byou\b/.test(normalized))
+        || /\b(are you|are u)\b/i.test(normalized)
+        || /\b(what)\b.*\b(you|yourself|rithcon)\b/i.test(normalized);
+
+    const isWellbeingQuery = /\b(how are you|how are u|hows it going|how do you do)\b/i.test(normalized);
+
+    if (isIdentityQuery || isWellbeingQuery) {
+        return BRAND_IDENTITY_RESPONSE;
+    }
+
+    return '';
+}
+
+function normalizeIntentText(text) {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/([a-z])\1{2,}/g, '$1')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function looksPotentiallyIdentityRelated(normalizedText) {
+    if (!normalizedText) {
+        return false;
+    }
+
+    const tokenCount = normalizedText.split(' ').filter(Boolean).length;
+    if (tokenCount > 12) {
+        return false;
+    }
+
+    return /\b(who|what|how|are you|name|creator|made|built|model|agent|bot|about you|yourself|capabilities|do you do)\b/i.test(normalizedText);
+}
+
+function isRelatedByClassifier(raw) {
+    if (typeof raw !== 'string') {
+        return false;
+    }
+
+    const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+    try {
+        const parsed = JSON.parse(cleaned);
+        if (parsed && typeof parsed.related === 'boolean') {
+            return parsed.related;
+        }
+        if (parsed && typeof parsed.related === 'string') {
+            return parsed.related.toLowerCase() === 'true';
+        }
+    } catch (_error) {
+        // Fallback below.
+    }
+
+    return /\btrue\b/i.test(cleaned) && !/\bfalse\b/i.test(cleaned);
 }
 
 function resizeInputBox() {
